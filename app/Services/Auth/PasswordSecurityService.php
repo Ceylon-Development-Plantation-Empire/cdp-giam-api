@@ -201,6 +201,9 @@ class PasswordSecurityService
             // Trigger credential verifier projection to active projects
             $this->projectionService->syncCredentialChange($user, $user->password);
 
+            // Revoke all existing JWTs for this user across all sessions
+            \App\Services\Auth\SimpleJwtService::revokeAllForUser($user->id);
+
             return $user;
         });
     }

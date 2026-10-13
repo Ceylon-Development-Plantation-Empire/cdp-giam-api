@@ -35,18 +35,38 @@ class AuthenticateGiamSessionOrBearer
             $userId = SimpleJwtService::validateToken($bearer);
             if ($userId) {
                 $user = User::find($userId);
-                if ($user && $user->is_active && $user->can_login) {
+                if ($user && (! $user->lockout_until || ! $user->lockout_until->isFuture())) {
                     Auth::guard('web')->setUser($user);
                     Auth::setUser($user);
                     $request->setUserResolver(fn () => $user);
                     return $next($request);
                 }
             }
+
+            // Explicit Bearer token was provided but failed validation (invalid, expired, revoked, or locked out).
+            return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         // 2. Check Web Session
         if (Auth::guard('web')->check()) {
-            return $next($request);
+            $user = Auth::guard('web')->user();
+            if ($user && (! $user->lockout_until || ! $user->lockout_until->isFuture())) {
+                // CSRF Protection for state-changing HTTP requests using session cookies:
+                // Simple requests (HTML forms / un-preflighted requests) cannot set custom headers or JSON payloads.
+                if (in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                    $hasSecurityHeader = $request->hasHeader('X-Requested-With')
+                        || $request->hasHeader('X-CSRF-TOKEN')
+                        || $request->hasHeader('X-XSRF-TOKEN');
+
+                    if (! $hasSecurityHeader && ! $request->isJson()) {
+                        return response()->json(['message' => 'CSRF verification failed: missing security header.'], 403);
+                    }
+                }
+                $request->setUserResolver(fn () => $user);
+                return $next($request);
+            }
+            Auth::guard('web')->logout();
+            return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         return response()->json(['message' => 'Unauthenticated.'], 401);

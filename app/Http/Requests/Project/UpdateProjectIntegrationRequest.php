@@ -34,11 +34,38 @@ class UpdateProjectIntegrationRequest extends FormRequest
             $clientIdRule->ignore($integrationId);
         }
 
+        $urlValidator = app(\App\Services\Security\UrlSecurityValidator::class);
+
         return [
-            'api_base_url' => ['sometimes', 'required', 'url', 'max:255'],
+            'api_base_url' => [
+                'sometimes',
+                'required',
+                'url',
+                'max:255',
+                function (string $attribute, mixed $value, \Closure $fail) use ($urlValidator) {
+                    if (is_string($value) && ! empty($value)) {
+                        $check = $urlValidator->validate($value);
+                        if (! $check['valid']) {
+                            $fail($check['error'] ?? 'Invalid API base URL.');
+                        }
+                    }
+                },
+            ],
             'auth_method' => ['sometimes', Rule::in(['bearer_token', 'oauth2', 'hmac', 'api_key'])],
             'client_id' => ['nullable', 'string', 'max:100', $clientIdRule],
             'client_secret' => ['nullable', 'string'],
+            'redirect_uris' => ['nullable', 'array'],
+            'redirect_uris.*' => [
+                'url',
+                function (string $attribute, mixed $value, \Closure $fail) use ($urlValidator) {
+                    if (is_string($value)) {
+                        $check = $urlValidator->validate($value);
+                        if (! $check['valid']) {
+                            $fail($check['error'] ?? 'Invalid redirect URI.');
+                        }
+                    }
+                },
+            ],
             'allowed_user_fields' => ['sometimes', 'required', 'array'],
             'allowed_user_fields.*' => ['string', Rule::in(\App\Models\ProjectIntegration::VALID_PROJECTION_FIELDS)],
             'sync_enabled' => ['sometimes', 'boolean'],

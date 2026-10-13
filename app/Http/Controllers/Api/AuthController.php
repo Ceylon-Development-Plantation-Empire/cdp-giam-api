@@ -75,6 +75,19 @@ class AuthController extends Controller
 
     public function logout(Request $request): JsonResponse
     {
+        $bearer = $request->bearerToken();
+        if (! $bearer && isset($_SERVER['HTTP_AUTHORIZATION'])) {
+            if (preg_match('/Bearer\s+(\S+)/i', $_SERVER['HTTP_AUTHORIZATION'], $matches)) {
+                $bearer = $matches[1];
+            }
+        }
+        if ($bearer) {
+            $revoked = \App\Services\Auth\SimpleJwtService::revokeToken($bearer);
+            if (! $revoked) {
+                Log::error('Logout token revocation failed to persist in shared revocation store.');
+            }
+        }
+
         $this->authService->logout($request);
 
         return response()->json([
@@ -168,6 +181,9 @@ class AuthController extends Controller
         );
         // Propagate updated bcrypt verifier to downstream projects
         $this->projectionService->syncCredentialChange($user, $newHash);
+
+        // Revoke all existing JWTs for this user across all sessions
+        \App\Services\Auth\SimpleJwtService::revokeAllForUser($user->id);
 
         return response()->json([
             'status' => 'success',

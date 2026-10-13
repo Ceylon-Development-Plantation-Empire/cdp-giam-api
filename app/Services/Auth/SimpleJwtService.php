@@ -3,10 +3,12 @@
 namespace App\Services\Auth;
 
 use App\Models\User;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Service generating and validating signed HS256 JWTs for GIAM Principals
- * using APP_KEY without external state overhead.
+ * using APP_KEY with server-side revocation registry support.
  */
 class SimpleJwtService
 {
@@ -19,6 +21,7 @@ class SimpleJwtService
      */
     public static function generateToken(User $user, int $ttlSeconds = 86400): string
     {
+        $now = microtime(true);
         $header = self::base64UrlEncode(json_encode([
             'alg' => 'HS256',
             'typ' => 'JWT',
@@ -29,8 +32,10 @@ class SimpleJwtService
             'sub' => $user->id,
             'username' => $user->username,
             'employee_code' => $user->employee_code,
-            'iat' => time(),
-            'exp' => time() + $ttlSeconds,
+            'jti' => bin2hex(random_bytes(16)),
+            'iat' => (int) floor($now),
+            'iat_v' => $now,
+            'exp' => (int) floor($now) + $ttlSeconds,
         ]));
 
         $secret = config('app.key');
@@ -40,7 +45,7 @@ class SimpleJwtService
     }
 
     /**
-     * Validate and decode a signed HS256 JWT. Returns User ID if valid.
+     * Validate and decode a signed HS256 JWT. Returns User ID if valid and unrevoked.
      *
      * @param string $token
      * @return int|null
@@ -70,7 +75,91 @@ class SimpleJwtService
             return null;
         }
 
+        // Check if individual token has been revoked
+        $jti = isset($payload['jti']) && is_string($payload['jti']) && trim($payload['jti']) !== ''
+            ? trim($payload['jti'])
+            : null;
+        $tokenId = $jti ?? hash('sha256', $sigB64);
+
+        try {
+            // Guard against insecure isolated cache driver in production
+            if (app()->environment('production') && in_array(config('cache.default'), ['file', 'array', null], true)) {
+                Log::critical('Insecure local cache store configured in production: ' . config('cache.default') . '. Refusing token validation to prevent isolated revocation bypass.');
+                return null;
+            }
+
+            if (Cache::has("giam_jwt_revoked:{$tokenId}")) {
+                return null;
+            }
+
+            // Check if user has a global revocation event issued after this token's creation
+            $userRevokedAt = Cache::get("giam_jwt_revoked_user:{$payload['sub']}");
+            if ($userRevokedAt !== null) {
+                $tokenIssuedAt = (float) ($payload['iat_v'] ?? $payload['iat'] ?? 0);
+                if ((float) $userRevokedAt >= $tokenIssuedAt) {
+                    return null;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('JWT revocation store check failed: ' . $e->getMessage());
+            // Fail-secure: Cannot guarantee token is unrevoked if store check fails; deny authentication
+            return null;
+        }
+
         return (int) $payload['sub'];
+    }
+
+    /**
+     * Revoke a specific token by adding its ID to the revocation cache for its remaining lifetime.
+     *
+     * @param string $token
+     * @return bool
+     */
+    public static function revokeToken(string $token): bool
+    {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) {
+            return false;
+        }
+
+        [$headerB64, $payloadB64, $sigB64] = $parts;
+
+        $payload = json_decode(self::base64UrlDecode($payloadB64), true);
+        if (! $payload || ! isset($payload['exp'])) {
+            return false;
+        }
+
+        $remainingTtl = max(60, (int) ($payload['exp'] - time()));
+        $jti = isset($payload['jti']) && is_string($payload['jti']) && trim($payload['jti']) !== ''
+            ? trim($payload['jti'])
+            : null;
+        $tokenId = $jti ?? hash('sha256', $sigB64);
+
+        try {
+            Cache::put("giam_jwt_revoked:{$tokenId}", true, $remainingTtl);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('Failed to revoke JWT in cache: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Revoke all active tokens for a specific user (e.g. on logout-all, password change, deactivation).
+     *
+     * @param int|string $userId
+     * @param int $ttlSeconds Window to reject older tokens (default 24 hours)
+     * @return bool
+     */
+    public static function revokeAllForUser(int|string $userId, int $ttlSeconds = 86400): bool
+    {
+        try {
+            Cache::put("giam_jwt_revoked_user:{$userId}", microtime(true), $ttlSeconds);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('Failed to revoke all user JWTs in cache: ' . $e->getMessage());
+            return false;
+        }
     }
 
     public static function base64UrlEncode(string $data): string
