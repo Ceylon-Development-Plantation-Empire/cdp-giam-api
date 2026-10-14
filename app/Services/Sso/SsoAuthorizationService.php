@@ -179,12 +179,23 @@ class SsoAuthorizationService
             throw new HttpException(429, "Too many failed authentication attempts for client ID [{$clientId}]. Locked out for {$seconds} seconds.");
         }
 
-        // 2. Authenticate downstream project client
+        // 2. Authenticate downstream project client (supporting rotation grace period)
         $integration = ProjectIntegration::with('project')
             ->where('client_id', $clientId)
             ->first();
 
-        if (! $integration || ! hash_equals((string) $integration->getDecryptedClientSecret(), $clientSecret)) {
+        $activeSecret = $integration?->getDecryptedClientSecret();
+        $isPrimaryMatch = $activeSecret !== null && hash_equals((string) $activeSecret, $clientSecret);
+        $isPreviousMatch = false;
+
+        if (! $isPrimaryMatch && $integration && $integration->hasActivePreviousSecret()) {
+            $prevSecret = $integration->getDecryptedPreviousClientSecret();
+            if ($prevSecret !== null && hash_equals((string) $prevSecret, $clientSecret)) {
+                $isPreviousMatch = true;
+            }
+        }
+
+        if (! $integration || (! $isPrimaryMatch && ! $isPreviousMatch)) {
             RateLimiter::hit($ipLockoutKey, 900);
             RateLimiter::hit($clientLockoutKey, 900);
             throw new HttpException(401, 'Invalid client credentials.');

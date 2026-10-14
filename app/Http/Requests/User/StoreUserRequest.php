@@ -62,4 +62,46 @@ class StoreUserRequest extends FormRequest
             'roles.*.exists' => 'The selected GIAM internal role is invalid or does not exist.',
         ];
     }
+
+    /**
+     * Configure the validator instance with soft-deleted account collision detection.
+     */
+    public function withValidator(\Illuminate\Validation\Validator $validator): void
+    {
+        $validator->after(function ($validator) {
+            $employeeCode = $this->input('employee_code');
+            if ($employeeCode) {
+                $trashed = \App\Models\User::onlyTrashed()->where('employee_code', $employeeCode)->first();
+                if ($trashed) {
+                    $validator->errors()->forget('employee_code');
+                    $validator->errors()->add(
+                        'employee_code',
+                        "A soft-deleted account already exists with employee code '{$employeeCode}'. Restore the existing account (ID {$trashed->id}) to preserve identity continuity and audit history."
+                    );
+                }
+            }
+            $username = $this->input('username');
+            if ($username) {
+                $trashedUser = \App\Models\User::onlyTrashed()->where('username', $username)->first();
+                if ($trashedUser) {
+                    $validator->errors()->forget('username');
+                    $validator->errors()->add(
+                        'username',
+                        "A soft-deleted account already exists with username '{$username}'. Restore the existing account (ID {$trashedUser->id}) to preserve identity continuity and audit history."
+                    );
+                }
+            }
+            $email = $this->input('email');
+            if ($email) {
+                $trashedEmail = \App\Models\User::onlyTrashed()->where('email', $email)->first();
+                if ($trashedEmail) {
+                    $validator->errors()->forget('email');
+                    $validator->errors()->add(
+                        'email',
+                        "A soft-deleted account already exists with email '{$email}'. Restore the existing account (ID {$trashedEmail->id}) to preserve identity continuity and audit history."
+                    );
+                }
+            }
+        });
+    }
 }

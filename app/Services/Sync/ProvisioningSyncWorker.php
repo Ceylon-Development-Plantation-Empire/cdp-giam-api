@@ -55,6 +55,17 @@ class ProvisioningSyncWorker
             return false;
         }
 
+        // Defer execution if project integration is offline or synchronization is disabled
+        if (! $integration->sync_enabled || $project->status === 'disabled' || $integration->status === 'offline') {
+            $syncJob->update([
+                'status' => 'PENDING',
+                'last_error' => "Deferred: Integration for project [{$project->code}] is inactive or offline.",
+                'next_retry_at' => now()->addMinutes(30),
+            ]);
+
+            return false;
+        }
+
         // Prevent concurrent processing race conditions via atomic transition
         $affected = SyncJob::where('id', $syncJob->id)
             ->whereIn('status', ['PENDING', 'RETRYING'])
@@ -72,6 +83,21 @@ class ProvisioningSyncWorker
         $newAttempt = $syncJob->attempt_count;
 
         $externalRef = $syncJob->payload['giam_user_id'] ?? $syncJob->payload['externalRef'] ?? $user?->id ?? $user?->employee_code ?? 'unknown';
+
+        // Safety guard against obsolete provisioning if user access was revoked or deleted prior to execution
+        $currentAccess = UserProjectAccess::where('user_id', $syncJob->user_id)
+            ->where('project_id', $syncJob->project_id)
+            ->first();
+
+        if ($currentAccess && $currentAccess->status === 'REVOKED' && in_array($syncJob->operation, ['CREATE_USER', 'ASSIGN_ACCESS', 'UPDATE_USER'])) {
+            $syncJob->update([
+                'status' => 'SUCCESS',
+                'last_error' => 'Skipped: User access to project is REVOKED.',
+                'processed_at' => now(),
+            ]);
+            return true;
+        }
+
 
         // Resolve endpoint URI
         $hasNamespace = str_ends_with(rtrim($integration->api_base_url, '/'), '/api/giam/integration');
@@ -122,18 +148,21 @@ class ProvisioningSyncWorker
                     'processed_at' => now(),
                 ]);
 
-                // Update business state in user_project_access
+                // Update business state in user_project_access (preserving REVOKED status)
                 $access = UserProjectAccess::where('user_id', $syncJob->user_id)
                     ->where('project_id', $syncJob->project_id)
                     ->first();
 
                 if ($access) {
                     if (in_array($syncJob->operation, ['CREATE_USER', 'ASSIGN_ACCESS'])) {
-                        $access->status = 'ACTIVE';
+                        if ($access->status !== 'REVOKED') {
+                            $access->status = 'ACTIVE';
+                            $access->save();
+                        }
                     } elseif ($syncJob->operation === 'REVOKE_ACCESS') {
                         $access->status = 'REVOKED';
+                        $access->save();
                     }
-                    $access->save();
                 }
 
                 // Securely push bcrypt verifier to dedicated credential endpoint upon CREATE_USER or ASSIGN_ACCESS

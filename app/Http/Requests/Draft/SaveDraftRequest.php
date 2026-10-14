@@ -15,6 +15,18 @@ class SaveDraftRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation, stripping prohibited credentials.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('form_data') && is_array($this->input('form_data'))) {
+            $formData = $this->input('form_data');
+            $cleanData = app(\App\Services\User\DraftService::class)->sanitizeFormData($formData);
+            $this->merge(['form_data' => $cleanData]);
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>

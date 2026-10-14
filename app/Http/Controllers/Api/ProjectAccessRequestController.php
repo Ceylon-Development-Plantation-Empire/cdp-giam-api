@@ -22,6 +22,35 @@ class ProjectAccessRequestController extends Controller
     ) {}
 
     /**
+     * Get aggregated counts of project access requests by status.
+     * Gated by ACCESS_VIEW.
+     */
+    public function counts(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor || ! $actor->hasPermissionTo('ACCESS_VIEW', 'web')) {
+            throw new HttpException(403, 'Forbidden: Insufficient permissions to view access requests.');
+        }
+
+        $counts = ProjectAccessRequest::selectRaw("
+            SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'FULFILLED' THEN 1 ELSE 0 END) as fulfilled,
+            SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
+            COUNT(*) as total
+        ")->first();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'pending' => (int) ($counts->pending ?? 0),
+                'fulfilled' => (int) ($counts->fulfilled ?? 0),
+                'rejected' => (int) ($counts->rejected ?? 0),
+                'total' => (int) ($counts->total ?? 0),
+            ],
+        ]);
+    }
+
+    /**
      * List project access requests (Workflow 2: Access Requests view).
      * Gated by ACCESS_VIEW.
      */
