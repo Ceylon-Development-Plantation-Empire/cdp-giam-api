@@ -113,6 +113,17 @@ class UserController extends Controller
         $beforeData = $user->toArray();
         $user->update(['is_active' => false, 'can_login' => false]);
         $user->delete();
+        \App\Services\Auth\SimpleJwtService::revokeAllForUser($user->id);
+
+        // Security rule: Explicitly revoke all active project accesses upon deactivation
+        \App\Models\UserProjectAccess::where('user_id', $user->id)
+            ->where('status', 'ACTIVE')
+            ->update([
+                'status' => 'REVOKED',
+                'revoked_by' => $request->user()?->id,
+                'revoked_at' => now(),
+                'revocation_reason' => 'User account deactivated / soft-deleted',
+            ]);
 
         $this->auditLogger->log(
             action: 'USER_DEACTIVATED',
@@ -160,5 +171,59 @@ class UserController extends Controller
         $result = $this->userCreationService->resendCredentials($user, $request->user());
 
         return response()->json($result);
+    }
+
+    /**
+     * Restore a soft-deleted user account and restore active status.
+     */
+    public function restore(Request $request, int|string $id): JsonResponse
+    {
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $id) {
+            $user = User::withTrashed()
+                ->where(function ($q) use ($id) {
+                    $q->where('id', $id)->orWhere('username', $id);
+                })
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! $user->trashed()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User account is not soft-deleted.',
+                ], 422);
+            }
+
+            $beforeData = $user->toArray();
+            $user->restore();
+            $user->is_active = true;
+            $user->can_login = true;
+            $user->must_change_password = true; // Security policy: returning employee must set new password
+            $user->failed_login_attempts = 0;
+            $user->lockout_until = null;
+            $user->save();
+
+            // Invalidate any pre-restoration tokens or credentials
+            \App\Services\Auth\SimpleJwtService::revokeAllForUser($user->id);
+
+            // Note: Historical project access entitlements remain REVOKED to prevent silent privilege escalation.
+            // Any project access re-entitlement requires explicit assignment by an authorized administrator.
+
+            $this->auditLogger->log(
+                action: 'USER_RESTORED',
+                entityType: 'User',
+                entityId: (string) $user->id,
+                beforeData: $beforeData,
+                afterData: $user->fresh()->toArray(),
+                status: 'SUCCESS',
+                actorUserId: $request->user()?->id,
+                request: $request
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'User account restored successfully.',
+                'data' => new UserResource($user->fresh(['employee', 'roles', 'permissions'])),
+            ]);
+        });
     }
 }

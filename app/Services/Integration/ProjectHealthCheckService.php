@@ -44,8 +44,13 @@ class ProjectHealthCheckService
         try {
             $client = $this->clientFactory->make($project, timeoutSeconds: 3);
 
-            // Ping health endpoint or base
-            $response = $client->get('/health');
+            // Probe downstream health endpoint (supports /health-check and /health conventions)
+            $baseUrl = rtrim((string) $integration->api_base_url, '/');
+            $response = $client->get("{$baseUrl}/health-check");
+            if ($response->status() === 404) {
+                $response = $client->get("{$baseUrl}/health");
+            }
+
             $latencyMs = round((microtime(true) - $startTime) * 1000);
             $statusCode = $response->status();
 
@@ -65,10 +70,13 @@ class ProjectHealthCheckService
             Log::warning("Health check failed for project [{$project->code}]: {$errorMessage}");
         }
 
-        // Update database record
+        // Update database record including verification tracking
         $integration->update([
             'status' => $status,
             'last_health_check_at' => now(),
+            'verification_status' => $status === 'healthy' ? 'verified' : 'failed',
+            'verification_error' => $status === 'healthy' ? null : $errorMessage,
+            'last_verified_at' => now(),
         ]);
 
         $this->auditLogger->log(

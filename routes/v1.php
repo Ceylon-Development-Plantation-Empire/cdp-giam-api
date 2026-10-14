@@ -94,6 +94,7 @@ Route::prefix('v1')->group(function () {
             Route::patch('/{id}/status', [UserController::class, 'updateStatus'])->middleware(['giam.permission:USER_DEACTIVATE', 'throttle:sensitive-writes']);
             Route::post('/{id}/resend-credentials', [UserController::class, 'resendCredentials'])->middleware(['giam.permission:USER_UPDATE', 'throttle:sensitive-writes']);
             Route::delete('/{id}', [UserController::class, 'destroy'])->middleware(['giam.permission:USER_DEACTIVATE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/restore', [UserController::class, 'restore'])->middleware(['giam.permission:USER_DEACTIVATE', 'throttle:sensitive-writes']);
 
             // Multi-Project Access Assignment, Inspection, Update & Revocation
             Route::get('/{userId}/project-access', [UserProjectAccessController::class, 'index'])->middleware('giam.permission:ACCESS_VIEW');
@@ -105,6 +106,7 @@ Route::prefix('v1')->group(function () {
 
         // HR Project Access Requests (Workflow 2)
         Route::prefix('project-access-requests')->group(function () {
+            Route::get('/counts', [ProjectAccessRequestController::class, 'counts'])->middleware('giam.permission:ACCESS_VIEW');
             Route::get('/', [ProjectAccessRequestController::class, 'index'])->middleware('giam.permission:ACCESS_VIEW');
             Route::get('/{id}', [ProjectAccessRequestController::class, 'show'])->middleware('giam.permission:ACCESS_VIEW');
             Route::post('/{id}/resolve', [ProjectAccessRequestController::class, 'resolve'])->middleware(['giam.permission:ACCESS_ASSIGN', 'throttle:sensitive-writes']);
@@ -114,6 +116,7 @@ Route::prefix('v1')->group(function () {
         // Projects Registry & Integrations (Read, Status & Health/Sync Operations)
         Route::prefix('projects')->group(function () {
             Route::get('/', [ProjectController::class, 'index'])->middleware('giam.permission:PROJECT_VIEW');
+            Route::post('/', [ProjectController::class, 'store'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
             Route::get('/{id}', [ProjectController::class, 'show'])->middleware('giam.permission:PROJECT_VIEW');
             Route::put('/{id}', [ProjectController::class, 'update'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
             Route::delete('/{id}', [ProjectController::class, 'destroy'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
@@ -122,6 +125,14 @@ Route::prefix('v1')->group(function () {
             Route::get('/{id}/integration', [ProjectIntegrationController::class, 'show'])->middleware('giam.permission:PROJECT_MANAGE');
             Route::put('/{id}/integration', [ProjectIntegrationController::class, 'update'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
             Route::post('/{id}/health-check', [ProjectIntegrationController::class, 'healthCheck'])->middleware('giam.permission:PROJECT_MANAGE');
+            Route::post('/{id}/integration/verify', [ProjectIntegrationController::class, 'verify'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/integration/credentials', [ProjectIntegrationController::class, 'provisionCredentials'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/integration/credentials/provision', [ProjectIntegrationController::class, 'provisionCredentials'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/integration/credentials/rotate', [ProjectIntegrationController::class, 'rotateCredentials'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/integration/credentials/revoke', [ProjectIntegrationController::class, 'revokeCredentials'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/integration/credentials/revoke-previous', [ProjectIntegrationController::class, 'revokePreviousSecret'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/integration/activate', [ProjectIntegrationController::class, 'activate'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
+            Route::post('/{id}/integration/deactivate', [ProjectIntegrationController::class, 'deactivate'])->middleware(['giam.permission:PROJECT_MANAGE', 'throttle:sensitive-writes']);
 
             // RBAC Catalog Discovery & Display
             Route::get('/{id}/catalog', [ProjectCatalogController::class, 'show'])->middleware('giam.permission:PROJECT_VIEW');

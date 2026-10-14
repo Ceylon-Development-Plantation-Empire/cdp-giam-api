@@ -16,6 +16,52 @@ use Illuminate\Support\Str;
 class DraftService
 {
     /**
+     * Prohibited sensitive keys that must NEVER be persisted in drafts.
+     */
+    public const PROHIBITED_KEYS = [
+        'password',
+        'password_confirmation',
+        'new_password',
+        'current_password',
+        'secret',
+        'client_secret',
+        'token',
+        'access_token',
+        'refresh_token',
+        'api_key',
+        'auth_token',
+        'remember_token',
+    ];
+
+    /**
+     * Recursively strip prohibited credentials and sensitive fields from draft data.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    public function sanitizeFormData(array $data): array
+    {
+        $sanitized = [];
+        foreach ($data as $key => $value) {
+            $normalizedKey = strtolower(trim((string) $key));
+            if (in_array($normalizedKey, self::PROHIBITED_KEYS, true) ||
+                str_ends_with($normalizedKey, '_password') ||
+                str_ends_with($normalizedKey, '_secret') ||
+                str_ends_with($normalizedKey, '_token')) {
+                continue;
+            }
+
+            if (is_array($value)) {
+                $sanitized[$key] = $this->sanitizeFormData($value);
+            } else {
+                $sanitized[$key] = $value;
+            }
+        }
+
+        return $sanitized;
+    }
+
+    /**
      * Save or update a draft state.
      *
      * @param User $creator
@@ -27,13 +73,14 @@ class DraftService
     public function saveDraft(User $creator, array $formData, int $step, ?string $draftToken = null): UserCreationDraft
     {
         $token = $draftToken ?: (string) Str::uuid();
+        $cleanData = $this->sanitizeFormData($formData);
 
         return UserCreationDraft::updateOrCreate(
              ['draft_token' => $token],
              [
                  'creator_user_id' => $creator->id,
                  'current_step' => $step,
-                 'form_data' => $formData,
+                 'form_data' => $cleanData,
                  'expires_at' => now()->addDays(7),
              ]
         );
@@ -48,10 +95,16 @@ class DraftService
      */
     public function getDraft(string $token, User $creator): ?UserCreationDraft
     {
-        return UserCreationDraft::where('draft_token', $token)
+        $draft = UserCreationDraft::where('draft_token', $token)
             ->where('creator_user_id', $creator->id)
             ->where('expires_at', '>', now())
             ->first();
+
+        if ($draft && is_array($draft->form_data)) {
+            $draft->form_data = $this->sanitizeFormData($draft->form_data);
+        }
+
+        return $draft;
     }
 
     /**

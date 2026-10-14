@@ -29,7 +29,7 @@ class ProjectRegistrySeeder extends Seeder
         $projectCodes = array_keys(config('projects.definitions', []));
 
         foreach ($projectCodes as $code) {
-            $service->onboard($code);
+            $service->onboard($code, strict: false);
         }
     }
 }

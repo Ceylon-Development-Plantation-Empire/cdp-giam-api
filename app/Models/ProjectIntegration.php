@@ -58,6 +58,11 @@ class ProjectIntegration extends Model
         'sync_enabled',
         'sso_enabled',
         'status',
+        'previous_encrypted_client_secret',
+        'previous_secret_expires_at',
+        'verification_status',
+        'verification_error',
+        'last_verified_at',
         'last_health_check_at',
         'last_sync_catalog_at',
     ];
@@ -69,6 +74,7 @@ class ProjectIntegration extends Model
      */
     protected $hidden = [
         'encrypted_client_secret',
+        'previous_encrypted_client_secret',
         'client_secret',
     ];
 
@@ -86,6 +92,8 @@ class ProjectIntegration extends Model
             'allowed_resource_fields' => 'array',
             'sync_enabled' => 'boolean',
             'sso_enabled' => 'boolean',
+            'previous_secret_expires_at' => 'datetime',
+            'last_verified_at' => 'datetime',
             'last_health_check_at' => 'datetime',
             'last_sync_catalog_at' => 'datetime',
         ];
@@ -121,5 +129,31 @@ class ProjectIntegration extends Model
         } catch (\Exception $e) {
             return null;
         }
+    }
+
+    /**
+     * Decrypt and retrieve the previous client secret during rotation grace period.
+     */
+    public function getDecryptedPreviousClientSecret(): ?string
+    {
+        if (empty($this->previous_encrypted_client_secret)) {
+            return null;
+        }
+
+        try {
+            return Crypt::decryptString($this->previous_encrypted_client_secret);
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Determine if a previous secret is currently active within its grace period.
+     */
+    public function hasActivePreviousSecret(): bool
+    {
+        return ! empty($this->previous_encrypted_client_secret)
+            && $this->previous_secret_expires_at !== null
+            && $this->previous_secret_expires_at->isFuture();
     }
 }

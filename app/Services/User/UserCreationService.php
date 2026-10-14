@@ -422,6 +422,9 @@ class UserCreationService
                 status: 'SUCCESS',
                 actorUserId: $actor?->id
             );
+
+            // Invalidate all active JWT tokens for user across all instances
+            \App\Services\Auth\SimpleJwtService::revokeAllForUser($user->id);
         });
 
         // External side effects outside DB transaction boundary
@@ -513,6 +516,11 @@ class UserCreationService
                 actorUserId: $actor?->id
             );
 
+            // Revoke active JWTs if permissions, roles, or password were changed
+            if (isset($data['roles']) || isset($fillable['password'])) {
+                \App\Services\Auth\SimpleJwtService::revokeAllForUser($user->id);
+            }
+
             // Trigger downstream update sync for active project accesses
             $this->syncActiveProjects($user->fresh());
 
@@ -593,6 +601,10 @@ class UserCreationService
             $user->save();
 
             $action = (! $user->is_active || ! $user->can_login) ? 'USER_DEACTIVATED' : 'USER_UPDATED';
+
+            if (! $user->is_active || ! $user->can_login) {
+                \App\Services\Auth\SimpleJwtService::revokeAllForUser($user->id);
+            }
 
             $this->auditLogger->log(
                 action: $action,
